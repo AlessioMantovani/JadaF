@@ -50,10 +50,6 @@ Thank you for considering contributing to **JadaF**! To help make the contributi
 
 ## Table of Contents
 - [How to Contribute](#how-to-contribute)
-- [Branching and Pull Requests](#branching-and-pull-requests)
-- [Code Style and Standards](#code-style-and-standards)
-- [Testing](#testing)
-- [Commit Messages](#commit-messages)
 
 ## How to Contribute
 
