@@ -42,5 +42,4 @@ disallow_incomplete_defs = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
-python_functions = "test_*"
 addopts = "--cov=jadaf --cov-report=term-missing"
