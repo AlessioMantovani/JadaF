@@ -19,7 +19,7 @@ JadaF requires the following Python packages:
 
 #### Installation for developement
 
-To install the dependencies, you need to download the repo and use requirements.txt (it's recomended to use a separate env if developing):
+To install the dependencies, you need to download the repo and use requirements.txt (it's recommended to use a separate env if developing):
 
 ```bash
 git clone https://github.com/yourusername/JadaF.git@dev
@@ -50,10 +50,6 @@ Thank you for considering contributing to **JadaF**! To help make the contributi
 
 ## Table of Contents
 - [How to Contribute](#how-to-contribute)
-- [Branching and Pull Requests](#branching-and-pull-requests)
-- [Code Style and Standards](#code-style-and-standards)
-- [Testing](#testing)
-- [Commit Messages](#commit-messages)
 
 ## How to Contribute
 
