@@ -51,31 +51,60 @@ def load_csv(
         
 def load_json(
     filepath: Union[str, Path],
+    orient: str = "records",
+    record_path: Optional[Union[str, list]] = None,
+    meta: Optional[list] = None,
+    sep: str = ".",
     **kwargs
 ) -> JDF:
     """
-    Load a JSON file into a JDF object.
+    Load a JSON file into a JDF object with recursive flattening of nested structures.
     
     Args:
         filepath: Path to the JSON file
-        **kwargs: Additional arguments to pass to polars.read_json
+        orient: Format of JSON data - 'records' for list of objects, 'columns' for column-oriented, etc.
+        record_path: Path to list of records in JSON data if records are nested
+        meta: List of fields to pull up from nested records
+        sep: Separator to use when flattening nested fields
+        **kwargs: Additional arguments to pass to pandas.read_json
         
     Returns:
-        A JDF object containing the data from the JSON file
+        A JDF object containing the flattened data from the JSON file
         
     Raises:
         FileNotFoundError: If the file doesn't exist
         ValueError: If the file can't be parsed as JSON
     """
     try:
-        df = pl.read_json(filepath, **kwargs)
-        return JDF(df)
+        import pandas as pd
+        import json
+        
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+        
+        if isinstance(data, list):
+            df_normalized = pd.json_normalize(data, record_path=record_path, meta=meta, sep=sep, **kwargs)
+        elif isinstance(data, dict):
+            if orient == "records" and any(isinstance(v, list) for v in data.values()):
+                for key, value in data.items():
+                    if isinstance(value, list):
+                        df_normalized = pd.json_normalize(value, record_path=record_path, meta=meta, sep=sep, **kwargs)
+                        break
+            else:
+                df_normalized = pd.json_normalize([data], record_path=record_path, meta=meta, sep=sep, **kwargs)
+        else:
+            raise ValueError("JSON data must be a list of records or a dictionary")
+        
+        df_polars = pl.from_pandas(df_normalized)
+        
+        return JDF(df_polars)
+    
     except Exception as e:
         if isinstance(e, FileNotFoundError):
             raise FileNotFoundError(f"File not found: {filepath}")
         else:
             raise ValueError(f"Error reading JSON file: {e}")
-
+    
 def load_excel(
     filepath: Union[str, Path],
     sheet_name: Optional[Union[str, int]] = 0,
