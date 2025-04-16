@@ -20,19 +20,30 @@ def load_csv(
     """
     Load a CSV file into a JDF object.
     
-    Args:
-        filepath: Path to the CSV file
-        delimiter: Character used to separate values
-        has_header: Whether the file has a header row
-        ignore_errors: Whether to ignore parsing errors
-        **kwargs: Additional arguments to pass to polars.read_csv
-        
-    Returns:
-        A JDF object containing the data from the CSV file
-        
-    Raises:
-        FileNotFoundError: If the file doesn't exist
-        ValueError: If the file can't be parsed as CSV
+    Parameters
+    ----------
+    filepath : Union[str, Path]
+        Path to the CSV file.
+    delimiter : str, optional, default=','
+        Character used to separate values.
+    has_header : bool, optional, default=True
+        Whether the file has a header row.
+    ignore_errors : bool, optional, default=False
+        Whether to ignore parsing errors.
+    **kwargs : keyword arguments
+        Additional arguments to pass to `polars.read_csv`.
+
+    Returns
+    -------
+    JDF
+        A JDF object containing the data from the CSV file.
+    
+    Raises
+    ------
+    FileNotFoundError
+        If the file doesn't exist.
+    ValueError
+        If the file can't be parsed as CSV.
     """
     try:
         df = pl.read_csv(
@@ -48,7 +59,8 @@ def load_csv(
             raise FileNotFoundError(f"File not found: {filepath}")
         else:
             raise ValueError(f"Error reading CSV file: {e}")
-        
+
+
 def load_json(
     filepath: Union[str, Path],
     orient: str = "records",
@@ -60,20 +72,32 @@ def load_json(
     """
     Load a JSON file into a JDF object with recursive flattening of nested structures.
     
-    Args:
-        filepath: Path to the JSON file
-        orient: Format of JSON data - 'records' for list of objects, 'columns' for column-oriented, etc.
-        record_path: Path to list of records in JSON data if records are nested
-        meta: List of fields to pull up from nested records
-        sep: Separator to use when flattening nested fields
-        **kwargs: Additional arguments to pass to pandas.read_json
-        
-    Returns:
-        A JDF object containing the flattened data from the JSON file
-        
-    Raises:
-        FileNotFoundError: If the file doesn't exist
-        ValueError: If the file can't be parsed as JSON
+    Parameters
+    ----------
+    filepath : Union[str, Path]
+        Path to the JSON file.
+    orient : str, optional, default='records'
+        Format of JSON data: 'records' for list of objects, 'columns' for column-oriented, etc.
+    record_path : Optional[Union[str, list]], optional, default=None
+        Path to list of records in JSON data if records are nested.
+    meta : Optional[list], optional, default=None
+        List of fields to pull up from nested records.
+    sep : str, optional, default='.'
+        Separator to use when flattening nested fields.
+    **kwargs : keyword arguments
+        Additional arguments to pass to `pandas.read_json`.
+
+    Returns
+    -------
+    JDF
+        A JDF object containing the flattened data from the JSON file.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the file doesn't exist.
+    ValueError
+        If the file can't be parsed as JSON.
     """
     try:
         import pandas as pd
@@ -114,18 +138,28 @@ def load_excel(
     """
     Load an Excel file into a JDF object.
     
-    Args:
-        filepath: Path to the Excel file
-        sheet_name: Name or index of the sheet to load (0 is the first sheet)
-        has_header: Whether the sheet has a header row
-        **kwargs: Additional arguments to pass to pandas.read_excel
-        
-    Returns:
-        A JDF object containing the data from the Excel file
-        
-    Raises:
-        FileNotFoundError: If the file doesn't exist
-        ValueError: If the file can't be parsed as Excel
+    Parameters
+    ----------
+    filepath : Union[str, Path]
+        Path to the Excel file.
+    sheet_name : Optional[Union[str, int]], optional, default=0
+        Name or index of the sheet to load (0 is the first sheet).
+    has_header : bool, optional, default=True
+        Whether the sheet has a header row.
+    **kwargs : keyword arguments
+        Additional arguments to pass to `pandas.read_excel`.
+
+    Returns
+    -------
+    JDF
+        A JDF object containing the data from the Excel file.
+    
+    Raises
+    ------
+    FileNotFoundError
+        If the file doesn't exist.
+    ValueError
+        If the file can't be parsed as Excel.
     """
     try:
         df_pd = pd.read_excel(
