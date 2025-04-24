@@ -3,5 +3,6 @@ polars
 matplotlib
 scikit-learn
 pandas
-seaborn
+plotly
+nbformat>=4.2.0
 openpyxl
