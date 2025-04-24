@@ -4,5 +4,6 @@ matplotlib
 scikit-learn
 numpy
 pandas
-seaborn
+plotly
+nbformat>=4.2.0
 openpyxl
