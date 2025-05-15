@@ -32,7 +32,7 @@ class Scaler:
         ValueError: If an unsupported scaler type is provided.
     """
 
-    def __init__(self, type_: Union[str, ScalerType] = "s", **kwargs):
+    def __init__(self, type_: str = "s", **kwargs):
         if isinstance(type_, str):
             type_ = ScalerType(type_)
         self.type = type_

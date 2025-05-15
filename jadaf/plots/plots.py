@@ -4,6 +4,7 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 from sklearn.metrics import confusion_matrix
 from typing import Dict, Any, List, Optional, Union, Tuple
+import numpy as np
 
 def set_plot_style(template: str = "plotly_dark"):
     """
@@ -96,7 +97,8 @@ def line_plot(
         The Scatter plot trace if return_trace=True; otherwise, shows the plot.
     """
     set_plot_style(template)
-    
+    X = np.asarray(X).flatten()
+    y = np.asarray(y).flatten()
     # Initialize default dictionaries if None
     line_kwargs = line_kwargs or {}
     marker_kwargs = marker_kwargs or {}
@@ -209,7 +211,7 @@ def scatter_plot(
         The Scatter plot trace if return_trace=True; otherwise, shows the plot.
     """
     marker_kwargs = marker_kwargs or {}
-    
+
     # If color or size is specified, add them to marker_kwargs
     if color is not None:
         marker_kwargs["color"] = color
@@ -253,7 +255,7 @@ def bar_plot(
     marker_kwargs: Optional[Dict[str, Any]] = None,
     name: Optional[str] = None,
     layout_kwargs: Optional[Dict[str, Any]] = None,
-):
+) -> Union[go.Bar | None]:
     """
     Create a bar plot with extensive customization options.
 
@@ -368,7 +370,7 @@ def cmatrix_plot(
     annotation_kwargs: Optional[Dict[str, Any]] = None,
     colorbar_kwargs: Optional[Dict[str, Any]] = None,
     layout_kwargs: Optional[Dict[str, Any]] = None,
-):
+) -> Union[go.Heatmap | None]:
     """
     Plot a confusion matrix using Plotly with extensive customization options.
     If saving trace for subplot don't use here title, use it in subplot function.
@@ -520,7 +522,7 @@ def histogram(
     marker_kwargs: Optional[Dict[str, Any]] = None,
     name: Optional[str] = None,
     layout_kwargs: Optional[Dict[str, Any]] = None,
-):
+) -> Union[go.Histogram, None]:
     """
     Create a histogram with extensive customization options.
 
@@ -722,14 +724,6 @@ def subplot(
     fig.update_layout(**layout_settings)
     fig.show()
 
-import plotly.graph_objects as go
-from typing import Optional, Dict, Any
-import typing as typ
-
-def set_plot_style(template: str = "plotly_dark"):
-    # Placeholder for setting a global style, if needed
-    pass
-
 def heatmap(
     z: typ.ArrayLike,
     x: Optional[typ.ArrayLike] = None,
@@ -747,12 +741,54 @@ def heatmap(
     annotation_format: Optional[str] = None,
     annotation_kwargs: Optional[Dict[str, Any]] = None,
     layout_kwargs: Optional[Dict[str, Any]] = None,
-):
-    """
-    Create a heatmap with extensive customization options.
-    """
+) -> Union[go.Heatmap, None] :
     set_plot_style(template)
+    """
+    Create a heatmap with extensive customization options using Plotly.
+
+    Parameters
+    ----------
+    z : array-like
+        2D data array to be represented as the heatmap values.
+    x : array-like, optional
+        Values for the x-axis ticks. Defaults to None, which uses indices.
+    y : array-like, optional
+        Values for the y-axis ticks. Defaults to None, which uses indices.
+    xlabel : str, optional
+        Label for the x-axis. Default is "X".
+    ylabel : str, optional
+        Label for the y-axis. Default is "Y".
+    title : str, optional
+        Title of the heatmap. Default is "Heatmap".
+    template : str, optional
+        Plotly template to apply for styling. Default is "plotly_dark".
+    return_trace : bool, optional
+        If True, returns the Plotly Heatmap trace object instead of showing the figure.
+        Default is False.
+    color_scale : str, optional
+        Name of the colorscale to use for the heatmap. Default is "Viridis".
+    z_min : float, optional
+        Minimum value for color scaling. If not provided, determined automatically.
+    z_max : float, optional
+        Maximum value for color scaling. If not provided, determined automatically.
+    colorbar_kwargs : dict, optional
+        Additional keyword arguments passed to the colorbar configuration.
+    text : array-like, optional
+        Array of text annotations for each cell in the heatmap.
+    annotation_format : str, optional
+        Format string for cell annotations (e.g., ".2f" for two decimals).
+        If provided, overlays text annotations on heatmap cells.
+    annotation_kwargs : dict, optional
+        Additional keyword arguments for customizing annotations (e.g., font size, style).
+    layout_kwargs : dict, optional
+        Additional keyword arguments passed to the figure's layout update method.
     
+Returns
+    -------
+    go.Heatmap or None
+        Returns a Plotly Heatmap trace if `return_trace=True`, otherwise displays the heatmap figure and returns None.
+    """
+
     colorbar_kwargs = colorbar_kwargs or {}
     annotation_kwargs = annotation_kwargs or {}
     layout_kwargs = layout_kwargs or {}
@@ -824,3 +860,6 @@ def heatmap(
             fig.update_layout(annotations=annotations)
 
         fig.show()
+
+def pca_plot():
+    ...

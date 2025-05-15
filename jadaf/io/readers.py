@@ -3,7 +3,6 @@ Data loading functions for jadaf.
 """
 
 import polars as pl
-import pandas as pd
 from typing import Optional, Union
 from pathlib import Path
 
@@ -162,6 +161,7 @@ def load_excel(
         If the file can't be parsed as Excel.
     """
     try:
+        import pandas as pd
         df_pd = pd.read_excel(
             filepath,
             sheet_name=sheet_name,
