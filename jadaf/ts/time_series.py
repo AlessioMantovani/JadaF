@@ -1,49 +1,39 @@
-import polars as pl
-import pandas as pd
-from typing import Optional, Union
+"""Time series transformation for jadaf"""
 
+import polars as pl
 from jadaf.core.jdf import JDF
+import re
 
-def _parse_duration(every: str) -> dict:
+
+def _parse_duration(every: str) -> int:
     """
-    Parse duration string like '2m', '1h', '15s' to dictionary for pl.duration
+    Parse duration string like '2m', '1h', '15s' to microseconds. Does not currently support month parsing
+    Raises ValueError on invalid format.
     """
-    units = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
-    amount = int(every[:-1])
-    unit_key = every[-1]
-    if unit_key not in units:
-        raise ValueError("Invalid duration format. Use 's', 'm', 'h', or 'd'.")
-    return {units[unit_key]: amount}
+    match = re.fullmatch(r"(\d+)(s|m|h|d|w|)", every)
+    if not match:
+        raise ValueError("Invalid duration format. Use format like '15s', '2m', '1h', or '1d'.")
 
+    amount, unit_key = match.groups()
+    multiplier = {"s": 1_000_000, "m": 60_000_000, "h": 3_600_000_000, "d": 86_400_000_000, "w": 604_800_000_000}
+    return int(amount) * multiplier[unit_key]
 
-def round_datetime(df: JDF, column: str, every: str) -> JDF:
-    """
-    Rounds a datetime column to the nearest specified interval using Polars.
+def round_datetime(df: JDF, column: str, every: str, method: str = "nearest") -> JDF:
+    interval_us = _parse_duration(every)
+    timestamp_us = pl.col(column).dt.epoch("us")
 
-    Parameters:
-        df (pl.DataFrame): The input DataFrame.
-        column (str): The name of the datetime column to round.
-        every (str): The interval to round to (e.g., '2m' for 2 minutes,
-                     '1h' for 1 hour, '15s' for 15 seconds).
+    if method == "nearest":
+        rounded_expr = ((timestamp_us + interval_us // 2) // interval_us) * interval_us
+    elif method == "floor":
+        rounded_expr = (timestamp_us // interval_us) * interval_us
+    elif method == "ceil":
+        rounded_expr = ((timestamp_us + interval_us - 1) // interval_us) * interval_us
+    else:
+        raise ValueError("Invalid method. Use 'nearest', 'floor', or 'ceil'.")
 
-    Returns:
-        pl.DataFrame: A new DataFrame with an additional column
-                      named '{column}_rounded' containing the rounded datetimes.
-    """
-    rounded_col = df.select(
-        pl.col(column).dt.epoch("us").alias("timestamp_us")
-    ).with_columns([
-        (pl.lit(pl.duration(**_parse_duration(every)))).alias("interval_us"),
-    ]).with_columns([
-        ((pl.col("timestamp_us") + pl.col("interval_us") // 2) // pl.col("interval_us") * pl.col("interval_us"))
-        .alias("rounded_us")
-    ]).with_columns([
-        pl.col("rounded_us").cast(pl.Datetime).alias(f"{column}_rounded")
-    ])
-
-    return df.with_columns(rounded_col[f"{column}_rounded"])
-
-import polars as pl
+    return JDF.wrap(df.with_columns(
+        rounded_expr.cast(pl.Datetime).alias(f"{column}_rounded")
+    ))
 
 def create_interval_groups(df: JDF, time_column: str, interval_minutes: int = 15, group_col_name: str = 'interval_group') -> JDF:
     df = df.with_columns([
@@ -58,4 +48,4 @@ def create_interval_groups(df: JDF, time_column: str, interval_minutes: int = 15
         pl.col(group_col_name).rank(method="dense").cast(pl.Int32).alias("group_id")
     ])
 
-    return df
+    return JDF.wrap(df)

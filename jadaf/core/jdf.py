@@ -4,6 +4,7 @@ Core DataFrame implementation.
 
 import polars as pl
 from typing import Optional, List, Dict, Any
+from polars import DataType
 
 
 class JDF:
@@ -20,16 +21,6 @@ class JDF:
             data: A Polars DataFrame to wrap. If None, creates an empty DataFrame.
         """
         self._df = data if data is not None else pl.DataFrame()
-    
-    @property
-    def df(self) -> pl.DataFrame:
-        """
-        Get the underlying Polars DataFrame.
-        
-        Returns:
-            The Polars DataFrame wrapped by this JDF.
-        """
-        return self._df
     
     def __repr__(self) -> str:
         """
@@ -82,6 +73,20 @@ class JDF:
         # fallback
         return self._df[key]
 
+    def __getattr__(self, name):
+        """Forward unknown methods to .df"""
+        return getattr(self._df, name)
+
+    @property
+    def df(self) -> pl.DataFrame:
+        """
+        Get the underlying Polars DataFrame.
+
+        Returns:
+            The Polars DataFrame wrapped by this JDF.
+        """
+        return self._df
+
     @property
     def shape(self) -> tuple:
         """Get the dimensions of the DataFrame."""
@@ -93,10 +98,14 @@ class JDF:
         return self._df.columns
     
     @property
-    def dtypes(self) -> Dict[str, Any]:
+    def dtypes(self) -> list[DataType]:
         """Get the data types of the DataFrame columns."""
         return self._df.dtypes
-    
+
+    @staticmethod
+    def wrap(df: pl.DataFrame) -> "JDF":
+        return JDF(df)
+
     def head(self, n: int = 5, jdf: bool = False) -> "pl.DataFrame | JDF":
         """
         Return the first `n` rows of the DataFrame.
