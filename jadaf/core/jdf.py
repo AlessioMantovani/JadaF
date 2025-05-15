@@ -210,7 +210,6 @@ class JDF:
             return JDF(self._df.select(self._column_groups[name]))
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
-    # Helper methods to reduce redundancy
     def _validate_columns(self, columns: List[str]) -> List[str]:
         """
         Validate that columns exist in the DataFrame.
@@ -644,7 +643,7 @@ class JDF:
                 col_stats["unique_count"] = unique_count
                 if unique_count < 20:
                     vc = col_series.value_counts().to_dicts()
-                    col_stats["value_counts"] = vc
+                    col_stats["value_counts"] = str(vc)
 
             stats_dict[col] = col_stats
 
