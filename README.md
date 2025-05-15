@@ -12,10 +12,11 @@
 
 JadaF requires the following Python packages:
 
-- **matplotlib/seaborn**: For creating interactive visualizations.
+- **plotly express**: For creating interactive visualizations.
 - **scikit-learn**: For machine learning algorithms and data preprocessing tools.
 - **polars**: A fast DataFrame library.
 - **pandas**: For handling structured data and manipulation.
+- **numpy**: For handling vectors, matrices and other math related data structures
 
 #### Installation for developement
 
@@ -44,39 +45,38 @@ If you don't want to develop, and just use the library you can install JadaF dir
 pip install git+https://github.com/AlessioMantovani/jada.git@main
 ```
 
-## Contributing to JadaF
+## Docs
 
-Thank you for considering contributing to **JadaF**! To help make the contribution process smoother, please take a moment to read and follow these guidelines.
+You can easly read from files and create a jadaf Dataframe with:
+```
+import jadaf as jd
 
-## Table of Contents
-- [How to Contribute](#how-to-contribute)
+df = jd.load_csv("path_to_your_csv_file")
+df = jd.load_json("path_to_your_json_file")
+df = jd.load_excell("path_to_your_excell_file")
+```
 
-## How to Contribute
+If you already have a loaded polars dataframe you can also wrap it around JDF:
+```
+import jadaf as jd
 
-### Clone the repository
+pl_dataframe = pl.Dataframe()
+jd_dataframe = JDF(pl_dataframe)
+```
+This will keep basic functionalities like:
+- Slicing 
+- Shape 
+- Columns names
+- dtypes
+- Head and Tails
+```
+import jadaf as jd
 
-Clone the repository in dev mode like mentioned above
-
-### **Create a branch**
-
-To implement a feature create it's own branch to avoid creating conflicts with the **dev** and **main** branches. Create a branch from the **dev** branch, otherwise you will miss other people new implementations!
-
-1. Click on the current branch in vscode
-
-![Select branch](IMG/contributing/1.png)
-
-2. Click on 'Create new branch from' and select dev (if you don't see dev create first a dev branch from main then repeat this step creating your own branch)
-
-![Create new branch](IMG/contributing/2.png)
-
-3. Name you local branch (use a short name that describes what you want to build), please don't use special characters, if you need spaces use _ or -
-
-4. Now you should be set up for developing! Before writing code always check that you are in the branch where you want changes to happen! 
-
-5. If you want to commit your changes add the files in the commit section
-
-![Commit](IMG/contributing/3.png)
-
-And then simply commit with a comment describing the changes and then sync!
-
-6. If you want to create a new branch remember to always first select the dev as your current branch, in the bottom left corner of vscode, click on the wheel icon to download all the updates and only after that create a new branch from dev!
+jd_dataframe[:2]
+jd_dataframe[:2, :2]
+jd_dataframe.shape
+jd_dataframe.dtype
+jd_dataframe.columns
+jd_dataframe.head(5)
+jd_dataframe.tail(10)
+```
