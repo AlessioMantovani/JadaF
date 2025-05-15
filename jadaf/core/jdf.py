@@ -3,7 +3,8 @@ Core DataFrame implementation.
 """
 
 import polars as pl
-from typing import Optional, List, Dict, Any
+import pandas as pd
+from typing import Optional, List, Dict, Any, Union
 
 
 class JDF:
@@ -13,8 +14,10 @@ class JDF:
 
     Parameters
     ----------
-    data : Optional[pl.DataFrame], default=None
-        A Polars DataFrame to wrap. If None, an empty DataFrame is created.
+    data : Union[pl.DataFrame, pd.DataFrame, None], default=None
+        Either a Polars DataFrame or a Pandas DataFrame. If a Pandas DataFrame
+        is provided, it will be converted to Polars automatically. If None,
+        an empty Polars DataFrame will be created.
 
     Attributes
     ----------
@@ -28,7 +31,9 @@ class JDF:
         Dictionary mapping column names to their data types.
     """
 
-    def __init__(self, data: Optional[pl.DataFrame] = None):
+    def __init__(self, data: Optional[Union[pl.DataFrame, pd.DataFrame, None]] = None):
+        if isinstance(data, pd.DataFrame):
+            data = pl.DataFrame(data)  # Convert pandas to polars
         self._df = data if data is not None else pl.DataFrame()
 
     @property
