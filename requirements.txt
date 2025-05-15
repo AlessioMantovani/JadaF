@@ -2,6 +2,7 @@ pytest
 polars
 matplotlib
 scikit-learn
+numpy
 pandas
 seaborn
 openpyxl
