@@ -618,7 +618,7 @@ class JDF:
         df = pl.DataFrame(rows)
         return JDF(df)
 
-    def to_dict(self, orient: str = "records") -> list[dict[str, Any]] | None:
+    def to_dict(self, orient: str = "records") -> Optional[List[Dict[str, Any]]]:
         """
         Convert DataFrame to dictionary.
         """
