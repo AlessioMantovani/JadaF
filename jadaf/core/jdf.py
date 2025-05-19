@@ -519,12 +519,14 @@ class JDF:
         """
         Count unique combinations of values in specified columns, along with counts and percentages.
         """
+        self._check_columns_exist(columns)
+
         if not isinstance(columns, list) or not all(isinstance(col, str) for col in columns):
             raise TypeError("columns must be a list of strings")
         self._check_columns_exist(columns)
 
         total = self._df.height
-        counts = self._df.groupby(columns).count()
+        counts = self._df.group_by(columns).count()
 
         non_group_cols = [col for col in counts.columns if col not in columns]
         if len(non_group_cols) != 1:
