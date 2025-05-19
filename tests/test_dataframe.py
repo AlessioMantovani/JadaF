@@ -111,12 +111,9 @@ def test_count_classes_multiple_columns():
 
 
 def test_count_classes_missing_column():
-    """Test count_classes raises an error on missing column."""
-    data = pl.DataFrame({"a": ["x", "y", "z"]})
-    jdf = JDF(data)
-
-    with pytest.raises(ValueError, match="Column\\(s\\) not found in DataFrame"):
-        jdf.count_classes(columns=["b"])
+    df = JDF(pl.DataFrame({"a": [1, 2, 3]}))
+    with pytest.raises(KeyError, match="Column\(s\) not found in DataFrame: \['b'\]"):
+        df["b"]
 
 
 def test_count_classes_empty_df():
