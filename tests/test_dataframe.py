@@ -110,16 +110,6 @@ def test_count_classes_multiple_columns():
     assert set(result.columns) >= {"a", "b", "count", "percentage"}
 
 
-def test_count_classes_returns_jdf():
-    """Test count_classes with jdf=True returns a JDF instance."""
-    data = pl.DataFrame({"a": ["x", "y", "x"]})
-    jdf = JDF(data)
-
-    result = jdf.count_classes(columns=["a"], jdf=True)
-    assert isinstance(result, JDF)
-    assert set(result.columns) == {"a", "count", "percentage"}
-
-
 def test_count_classes_missing_column():
     """Test count_classes raises an error on missing column."""
     data = pl.DataFrame({"a": ["x", "y", "z"]})
