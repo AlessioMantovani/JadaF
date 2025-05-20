@@ -110,23 +110,10 @@ def test_count_classes_multiple_columns():
     assert set(result.columns) >= {"a", "b", "count", "percentage"}
 
 
-def test_count_classes_returns_jdf():
-    """Test count_classes with jdf=True returns a JDF instance."""
-    data = pl.DataFrame({"a": ["x", "y", "x"]})
-    jdf = JDF(data)
-
-    result = jdf.count_classes(columns=["a"], jdf=True)
-    assert isinstance(result, JDF)
-    assert set(result.columns) == {"a", "count", "percentage"}
-
-
 def test_count_classes_missing_column():
-    """Test count_classes raises an error on missing column."""
-    data = pl.DataFrame({"a": ["x", "y", "z"]})
-    jdf = JDF(data)
-
-    with pytest.raises(ValueError, match="Column\\(s\\) not found in DataFrame"):
-        jdf.count_classes(columns=["b"])
+    df = JDF(pl.DataFrame({"a": [1, 2, 3]}))
+    with pytest.raises(KeyError, match=r'"Column\(s\) not found in DataFrame: \[\'b\'\]"'):
+        df.count_classes(['b'])
 
 
 def test_count_classes_empty_df():

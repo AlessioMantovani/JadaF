@@ -6,6 +6,7 @@ import polars as pl
 import pandas as pd
 from typing import Optional, List, Dict, Any, Union, Tuple, Callable
 import re
+from .sql_parser import _SQLExpressionParser
 
 
 class JDF:
@@ -68,109 +69,103 @@ class JDF:
 
     def __getitem__(self, key):
         """
-        Enables indexing and slicing into the underlying DataFrame.
+        Unified indexing and slicing into the underlying DataFrame.
 
-        Supports:
-        - jdf["col"] -> Column
-        - jdf[row_idx] -> Row(s)
-        - jdf[row_slice] -> Sliced JDF
-        - jdf[row_idx, col_idx] -> Scalar
-        - jdf[row_idx, col_name] or jdf[row_slice, col_name/s] -> Value(s)
-        - jdf[row_slice, :] -> Rows slice with all columns
-        - jdf[row_slice, col_slice] -> Rows and columns slice by position
+        This is the primary interface for accessing data in JDF that handles all cases:
 
-        Advanced patterns:
-        - jdf["col1, col2, col3"] -> Multiple columns by comma-separated string
-        - jdf[["col1", "col2"]] -> Multiple columns by list
-        - jdf["col*"] -> Pattern matching for column names
+        Row selection:
+        - jdf[5]                     -> Single row by position
+        - jdf[1:10]                  -> Multiple rows by position slice
+        - jdf[lambda df: df["col"] > 10] -> Rows filtered by condition
+        - jdf[[True, False, True...]] -> Rows filtered by boolean mask
+
+        Column selection:
+        - jdf["col"]                 -> Single column by name
+        - jdf[["col1", "col2"]]      -> Multiple columns by list of names
+        - jdf["col1, col2, col3"]    -> Multiple columns by comma-separated string
+        - jdf["col*"]                -> Columns by wildcard pattern
+        - jdf["col1":"col5"]         -> Range of columns by name
+        - jdf[lambda cols: [c for c in cols if "date" in c]] -> Columns by function
+
+        Row and column selection:
+        - jdf[5, "col"]              -> Value at (row, col)
+        - jdf[1:10, ["col1", "col2"]] -> Rows and columns subset
+        - jdf[:, "col*"]             -> All rows, pattern-matched columns
+
+        Column groups:
         - jdf[{"group": ["col1", "col2"]}] -> Column groups
-        - jdf[lambda df: df["col"] > 10] -> Boolean mask filtering
-        - jdf[:, lambda cols: [c for c in cols if "date" in c.lower()]] -> Column filtering function
-        - jdf["col1":"col5"] -> Column range slicing by name
         """
-        # Single string column or pattern
+        # --- Column selection ---
         if isinstance(key, str):
-            # Using the helper methods to reduce redundancy
             if "," in key:
                 cols = [col.strip() for col in key.split(",")]
                 self._check_columns_exist(cols)
                 return JDF(self._df.select(cols))
-
-            # Check for wildcard patterns
             if any(char in key for char in "*?["):
                 matching_cols = self._parse_column_pattern(key)
                 return JDF(self._df.select(matching_cols))
-
-            # Standard single column access
             if key not in self._df.columns:
                 raise KeyError(f"Column '{key}' not found in DataFrame")
             return self._df[key]
 
-        # Multiple columns as list
         if isinstance(key, list):
             if all(isinstance(k, str) for k in key):
                 self._check_columns_exist(key)
                 return JDF(self._df.select(key))
             elif all(isinstance(k, bool) for k in key):
-                # Boolean mask for rows
                 if len(key) != len(self._df):
-                    raise ValueError(f"Boolean mask length {len(key)} does not match DataFrame length {len(self._df)}")
-                mask = pl.Series(key)
-                return JDF(self._df.filter(mask))
+                    raise ValueError(
+                        f"Boolean mask length {len(key)} does not match DataFrame length {len(self._df)}")
+                return JDF(self._df.filter(pl.Series(key)))
 
-        # Column groups
+        # --- Boolean Series for row filtering ---
+        if isinstance(key, pl.Series) and key.dtype == pl.Boolean:
+            if len(key) != len(self._df):
+                raise ValueError(
+                    f"Boolean Series length {len(key)} does not match DataFrame length {len(self._df)}")
+            return JDF(self._df.filter(key))
+
+        # --- Column groups ---
         if isinstance(key, dict):
-            # Format: {group_name: column_list}
             result = {}
             for group_name, columns in key.items():
                 self._check_columns_exist(columns)
                 result[group_name] = JDF(self._df.select(columns))
             return result
 
-        # Lambda function for row filtering
+        # --- Lambda row filtering ---
         if callable(key):
             result = key(self)
             if isinstance(result, pl.Series) and result.dtype == pl.Boolean:
                 return JDF(self._df.filter(result))
             raise TypeError(f"Lambda function must return a boolean Series, got {type(result)}")
 
-        # Column range by name using slice
+        # --- Column range by name ---
         if isinstance(key, slice) and isinstance(key.start, str) and isinstance(key.stop, str):
             selected_cols = self._parse_column_selector(key)
             return JDF(self._df.select(selected_cols))
 
-        # Row selection by index or slice
+        # --- Row selection by index or slice ---
         if isinstance(key, (int, slice)):
-            # Validate int index range for rows
-            if isinstance(key, int):
-                if not (-len(self._df) <= key < len(self._df)):
-                    raise IndexError(f"Row index {key} out of range")
+            if isinstance(key, int) and not (-len(self._df) <= key < len(self._df)):
+                raise IndexError(f"Row index {key} out of range")
             return JDF(self._df[key])
 
-        # Tuple based access (rows, columns)
+        # --- Tuple-based row/column selection ---
         if isinstance(key, tuple):
             if len(key) != 2:
                 raise IndexError("Indexing tuple must be length 2")
-
             row_key, col_key = key
 
-            # Process the row and column selectors using helper methods
             row_selector = self._parse_row_selector(row_key)
 
-            # Special handling for int row key and different column key types
             if isinstance(row_key, int):
                 if not (-len(self._df) <= row_key < len(self._df)):
                     raise IndexError(f"Row index {row_key} out of range")
-
-                # Handle different column key types
                 if isinstance(col_key, int):
-                    # Get a single value at (row, col) position
                     if not (-len(self._df.columns) <= col_key < len(self._df.columns)):
                         raise IndexError(f"Column index {col_key} out of range")
-                    row = self._df.row(row_key)
-                    return row[col_key]
-
-                # Get column values for a single row
+                    return self._df.row(row_key)[col_key]
                 try:
                     cols = self._parse_column_selector(col_key)
                     if len(cols) == 1:
@@ -180,15 +175,10 @@ class JDF:
                 except Exception as e:
                     raise TypeError(f"Invalid column key: {e}")
 
-            # For non-integer row_key, handle the different types of col_key
-            # First get the subset of rows
             df_slice = self._df[row_selector]
 
-            # If col_key is None or slice(None), return all columns
             if col_key is None or col_key == slice(None):
                 return JDF(df_slice)
-
-            # Parse column selector and return selected columns
             try:
                 cols = self._parse_column_selector(col_key)
                 return JDF(df_slice.select(cols))
@@ -196,6 +186,60 @@ class JDF:
                 raise TypeError(f"Invalid column key: {e}")
 
         raise TypeError(f"Unsupported indexing key type: {type(key)}")
+
+    def iloc(self, row_indices=None, col_indices=None):
+        """
+        Position-based indexing for clarity and pandas compatibility.
+        
+        A simplified interface that focuses only on integer positions.
+        
+        Parameters
+        ----------
+        row_indices : int, list of int, or slice
+            Row positions to select
+        col_indices : int, list of int, or slice
+            Column positions to select
+            
+        Returns
+        -------
+        JDF or scalar
+            Selected data based on positions
+            
+        Examples
+        --------
+        >>> jdf.iloc[0, 0]  # First row, first column value
+        >>> jdf.iloc[0:5, [0, 2, 4]]  # First 5 rows, columns at positions 0, 2, and 4
+        """
+        # Handle row selection
+        if row_indices is None:
+            row_selected_df = self._df
+        elif isinstance(row_indices, (int, slice)):
+            row_selected_df = self._df[row_indices]
+        elif isinstance(row_indices, list) and all(isinstance(i, int) for i in row_indices):
+            row_selected_df = self._df[row_indices]
+        else:
+            raise TypeError(f"Row indices must be int, list of int, or slice, got {type(row_indices)}")
+
+        # Handle column selection
+        if col_indices is None:
+            return JDF(row_selected_df)
+        elif isinstance(col_indices, int):
+            if isinstance(row_indices, int):
+                # Single value
+                return row_selected_df[self._df.columns[col_indices]][0]
+            else:
+                # Single column by position
+                return JDF(row_selected_df.select([self._df.columns[col_indices]]))
+        elif isinstance(col_indices, slice):
+            # Slice of columns by position
+            selected_cols = self._df.columns[col_indices]
+            return JDF(row_selected_df.select(selected_cols))
+        elif isinstance(col_indices, list) and all(isinstance(i, int) for i in col_indices):
+            # List of columns by position
+            selected_cols = [self._df.columns[i] for i in col_indices]
+            return JDF(row_selected_df.select(selected_cols))
+        else:
+            raise TypeError(f"Column indices must be int, list of int, or slice, got {type(col_indices)}")
 
     def __getattr__(self, name: str):
         """
@@ -401,131 +445,17 @@ class JDF:
         self._check_columns_exist(columns)
         self._column_groups[group_name] = columns
 
-    def loc(self, row_selector=None, col_selector=None):
+    def query(self, expr: str) -> "JDF":
         """
-        Label-based indexing.
+        Filter rows using a query string with SQL-like syntax.
+
+        This method provides SQL-like filtering capabilities by parsing
+        the query expression and converting it to Polars expressions.
 
         Parameters
         ----------
-        row_selector : Various types
-            Can be:
-            - Boolean Series for filtering rows
-            - Lambda function returning boolean Series
-            - List of row indices
-            - Slice of indices
-        col_selector : Various types
-            Can be:
-            - String or list of column names
-            - Slice with column names
-            - Lambda function selecting columns
-            - Pattern string with wildcards
-
-        Returns
-        -------
-        JDF
-            New JDF with selected rows and columns
-
-        Examples
-        --------
-        >>> jdf.loc(lambda df: df["age"] > 30, ["name", "age"])
-        >>> jdf.loc(jdf["age"] > 30, "name*")
-        """
-        # Process row selector
-        row_processed = self._parse_row_selector(row_selector)
-
-        # Get row subset
-        if isinstance(row_processed, pl.Series):
-            row_selected_df = self._df.filter(row_processed)
-        else:
-            row_selected_df = self._df[row_processed]
-
-        # Process column selector
-        if col_selector is None:
-            return JDF(row_selected_df)
-
-        # Parse column selector and return selected columns
-        cols = self._parse_column_selector(col_selector)
-        return JDF(row_selected_df.select(cols))
-
-    def columns_like(self, pattern: str):
-        """
-        Select columns matching a pattern.
-
-        Parameters
-        ----------
-        pattern : str
-            Pattern to match column names (supports * and ? wildcards)
-
-        Returns
-        -------
-        JDF
-            JDF with only the matching columns
-
-        Examples
-        --------
-        >>> jdf.columns_like("date_*")  # All columns starting with "date_"
-        >>> jdf.columns_like("*_id")    # All columns ending with "_id"
-        """
-        matching_cols = self._parse_column_pattern(pattern)
-        return JDF(self._df.select(matching_cols))
-
-    def ix(self, row_indices=None, col_indices=None):
-        """
-        Position-based indexing.
-
-        Parameters
-        ----------
-        row_indices : int, list, or slice
-            Row positions to select
-        col_indices : int, list, or slice
-            Column positions to select
-
-        Returns
-        -------
-        JDF or scalar
-            Selected data based on positions
-
-        Examples
-        --------
-        >>> jdf.ix(0, 0)  # First row, first column value
-        >>> jdf.ix(slice(0, 5), [0, 2, 4])  # First 5 rows, columns at positions 0, 2, and 4
-        """
-        # Handle row selection
-        if row_indices is None:
-            row_selected_df = self._df
-        elif isinstance(row_indices, (int, list, slice)):
-            row_selected_df = self._df[row_indices]
-        else:
-            raise TypeError(f"Row indices must be int, list, or slice, got {type(row_indices)}")
-
-        # Handle column selection
-        if col_indices is None:
-            return JDF(row_selected_df)
-        elif isinstance(col_indices, int):
-            if isinstance(row_indices, int):
-                # Single value
-                return row_selected_df[self._df.columns[col_indices]][0]
-            else:
-                # Single column by position
-                return JDF(row_selected_df.select([self._df.columns[col_indices]]))
-        elif isinstance(col_indices, (list, slice)):
-            # Multiple columns by position
-            if isinstance(col_indices, list) and all(isinstance(i, int) for i in col_indices):
-                selected_cols = [self._df.columns[i] for i in col_indices]
-            else:  # Slice
-                selected_cols = self._df.columns[col_indices]
-            return JDF(row_selected_df.select(selected_cols))
-        else:
-            raise TypeError(f"Column indices must be int, list, or slice, got {type(col_indices)}")
-
-    def with_filter(self, condition):
-        """
-        Create a temporary filtered view of the DataFrame.
-
-        Parameters
-        ----------
-        condition : Callable or pl.Series
-            Filter condition
+        expr : str
+            Query expression string
 
         Returns
         -------
@@ -534,43 +464,69 @@ class JDF:
 
         Examples
         --------
-        >>> active_users = jdf.with_filter(lambda df: df["status"] == "active")
-        >>> recent_active = active_users.with_filter(lambda df: df["last_login"] > "2023-01-01")
+        >>> jdf.query("age > 30 and status == 'active'")
+        >>> jdf.query("price between 10 and 50")
+        >>> jdf.query("name like '%Smith%'")
+        >>> jdf.query("category in ('A', 'B', 'C')")
+        >>> jdf.query("(age > 30 or status == 'active') and price < 100")
         """
-        # Reuse the row selector parsing
-        row_selector = self._parse_row_selector(condition)
-        if isinstance(row_selector, pl.Series):
-            return JDF(self._df.filter(row_selector))
-        raise TypeError(f"Condition must be a callable or boolean Series")
+        try:
+            polars_expr = self._parse_query_expression(expr)
+            return JDF(self._df.filter(polars_expr))
+        except Exception as e:
+            raise ValueError(f"Error parsing query: {str(e)}")
 
-    def head(self, n: int = 5, jdf: bool = False) -> "pl.DataFrame | JDF":
+    def _parse_query_expression(self, expr: str) -> pl.Expr:
+        """
+        Parse a SQL-like query expression into Polars expression.
+        Uses recursive descent parsing for robust handling of nested expressions.
+
+        Parameters
+        ----------
+        expr : str
+            SQL-like query expression
+
+        Returns
+        -------
+        pl.Expr
+            Polars expression for filtering
+        """
+        # Normalize whitespace
+        expr = expr.strip()
+
+        # Create a parser instance to track position and handle parsing
+        # Pass the DataFrame instance for type checking
+        parser = _SQLExpressionParser(expr, self._df.columns, self._df)
+        return parser.parse_expression()
+
+    def head(self, n: int = 5) -> "JDF":
         """
         Return the first `n` rows of the DataFrame.
         """
         if not isinstance(n, int) or n < 0:
             raise ValueError(f"n must be a non-negative integer, got {n}")
-        result = self._df.head(n)
-        return JDF(result) if jdf else result
+        return JDF(self._df.head(n))
 
-    def tail(self, n: int = 5, jdf: bool = False) -> "pl.DataFrame | JDF":
+    def tail(self, n: int = 5) -> "JDF":
         """
         Return the last `n` rows of the DataFrame.
         """
         if not isinstance(n, int) or n < 0:
             raise ValueError(f"n must be a non-negative integer, got {n}")
-        result = self._df.tail(n)
-        return JDF(result) if jdf else result
+        return JDF(self._df.tail(n))
 
-    def count_classes(self, columns: List[str], jdf: bool = False) -> "pl.DataFrame | JDF":
+    def count_classes(self, columns: List[str]) -> "JDF":
         """
         Count unique combinations of values in specified columns, along with counts and percentages.
         """
+        self._check_columns_exist(columns)
+
         if not isinstance(columns, list) or not all(isinstance(col, str) for col in columns):
             raise TypeError("columns must be a list of strings")
         self._check_columns_exist(columns)
 
         total = self._df.height
-        counts = self._df.groupby(columns).count()
+        counts = self._df.group_by(columns).count()
 
         non_group_cols = [col for col in counts.columns if col not in columns]
         if len(non_group_cols) != 1:
@@ -583,7 +539,7 @@ class JDF:
             (pl.col("count") / total * 100).alias("percentage")
         )
 
-        return JDF(counts) if jdf else counts
+        return JDF(counts)
 
     def missing(self) -> "JDF":
         """
@@ -662,7 +618,7 @@ class JDF:
         df = pl.DataFrame(rows)
         return JDF(df)
 
-    def to_dict(self, orient: str = "records") -> list[dict[str, Any]] | None:
+    def to_dict(self, orient: str = "records") -> Optional[List[Dict[str, Any]]]:
         """
         Convert DataFrame to dictionary.
         """
