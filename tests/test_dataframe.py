@@ -112,7 +112,7 @@ def test_count_classes_multiple_columns():
 
 def test_count_classes_missing_column():
     df = JDF(pl.DataFrame({"a": [1, 2, 3]}))
-    with pytest.raises(KeyError, match="Column(s) not found in DataFrame: ['b']"):
+    with pytest.raises(KeyError, match=r'"Column\(s\) not found in DataFrame: \[\'b\'\]"'):
         df.count_classes(['b'])
 
 
