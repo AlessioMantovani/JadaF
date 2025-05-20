@@ -187,6 +187,35 @@ class JDF:
 
         raise TypeError(f"Unsupported indexing key type: {type(key)}")
 
+    def __setitem__(self, key: str, value: Union[pl.Series, Any]):
+        """
+        Assign a new column to the DataFrame.
+
+        Parameters
+        ----------
+        key : str
+            The name of the new or existing column.
+        value : pl.Series or any
+            The values to assign. Can be a Polars Series, list, or scalar.
+        """
+        if not isinstance(key, str):
+            raise TypeError(f"Column name must be a string, got {type(key)}")
+
+        # Convert value to a Polars Series if necessary
+        if not isinstance(value, pl.Series):
+            value = pl.Series(name=key, values=value)
+
+        # Ensure the Series has the correct length
+        if len(value) != len(self._df):
+            if len(value) == 1:
+                value = pl.Series(name=key, values=[value[0]] * len(self._df))
+            else:
+                raise ValueError(
+                    f"Length of new column ({len(value)}) does not match DataFrame length ({len(self._df)})")
+
+        # Update or insert column
+        self._df = self._df.with_columns(value.alias(key))
+
     def iloc(self, row_indices=None, col_indices=None):
         """
         Position-based indexing for clarity and pandas compatibility.
