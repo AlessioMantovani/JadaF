@@ -2,6 +2,7 @@ import operator
 import re
 import polars as pl
 from typing import Optional, List, Dict, Any, Union, Tuple, Callable
+from datetime import datetime, date, time
 
 
 class _SQLExpressionParser:
@@ -34,37 +35,41 @@ class _SQLExpressionParser:
         # Special operators
         self.special_ops = {'BETWEEN', 'IN', 'LIKE', 'IS', 'NOT'}
 
+        # Track column data types
+        self.column_dtypes = self._get_column_dtypes()
+
+    def _get_column_dtypes(self) -> Dict[str, pl.DataType]:
+        """Get data types for all columns in the DataFrame."""
+        if self.df is None:
+            return {}
+
+        return {col: dtype for col, dtype in zip(self.df.columns, self.df.dtypes)}
+
     def parse_expression(self) -> pl.Expr:
         """Parse a complete expression."""
         return self._parse_logical_expression()
 
     def _parse_logical_expression(self) -> pl.Expr:
         """Parse expressions with AND/OR operators."""
-        # Parse the first part (left of any AND/OR)
         left_expr = self._parse_comparison_expression()
 
-        # Look ahead for logical operators
         remainder = self.expr.strip()
 
         while remainder:
-            # Look for AND/OR at word boundaries
             and_match = re.match(r'\s*AND\s+', remainder, re.IGNORECASE)
             or_match = re.match(r'\s*OR\s+', remainder, re.IGNORECASE)
 
             if and_match:
-                # Skip 'AND' and parse the next expression
                 self.expr = remainder[and_match.end():].strip()
                 right_expr = self._parse_comparison_expression()
                 left_expr = left_expr & right_expr
                 remainder = self.expr.strip()
             elif or_match:
-                # Skip 'OR' and parse the next expression
                 self.expr = remainder[or_match.end():].strip()
                 right_expr = self._parse_comparison_expression()
                 left_expr = left_expr | right_expr
                 remainder = self.expr.strip()
             else:
-                # No more logical operators
                 break
 
         return left_expr
@@ -106,7 +111,8 @@ class _SQLExpressionParser:
         return self.comparison_ops[op](pl.col(col_name), value)
 
     def _extract_comparison_parts(self) -> Tuple[str, str, str]:
-        """Extract column name, operator, and value string from a comparison expression."""
+        """Extract column name, operator, and value string from a comparison expression.
+        Uses proper tokenization to avoid mis-parsing expressions."""
         expr = self.expr.strip()
 
         # Special handling for IS NULL and IS NOT NULL first
@@ -117,46 +123,174 @@ class _SQLExpressionParser:
             self.expr = expr[is_null_match.end():].strip()
             return col_name, "IS", "NOT NULL" if not_op else "NULL"
 
-        # Try to find the longest matching operator
-        ops = sorted(self.comparison_ops.keys() | self.special_ops, key=lambda x: (-len(x), x))
+        # Step 1: Tokenize the expression to identify column name and operator
+        # First, find the column name followed by an operator
+        column_and_op_pattern = r'^\s*(\w+)\s*(' + '|'.join(re.escape(op) for op in
+                                                            sorted(self.comparison_ops.keys() | self.special_ops,
+                                                                   key=lambda x: (-len(x), x))) + r')\s*'
 
-        for op in ops:
-            # Use regex to find the operator with word boundaries for special ops
-            if op.upper() in self.special_ops:
-                pattern = rf'^(.+?)\s+{re.escape(op)}\s+(.+?)(?=\s+(?:AND|OR)\s+|$)'
-                match = re.match(pattern, expr, re.IGNORECASE)
-                if match:
-                    col_part = match.group(1).strip()
-                    val_part = match.group(2).strip()
+        column_op_match = re.match(column_and_op_pattern, expr, re.IGNORECASE)
 
-                    # Find where the current expression ends (before AND/OR)
-                    remaining_match = re.search(r'\s+(AND|OR)\s+', expr, re.IGNORECASE)
-                    if remaining_match:
-                        self.expr = expr[remaining_match.start():].strip()
+        if not column_op_match:
+            return None, None, None
+
+        col_name = column_op_match.group(1).strip()
+        op = column_op_match.group(2).strip()
+
+        # Step 2: Extract the value part, being careful about logical operators
+        # Position after the operator
+        pos_after_op = column_op_match.end()
+
+        # Handle special operators differently
+        if op.upper() in self.special_ops:
+            if op.upper() == 'BETWEEN':
+                # For BETWEEN, we need to extract "value1 AND value2"
+                # Find the position of the logical AND/OR that terminates this expression
+                between_pattern = r'(.*?)\s+AND\s+(.*?)(?=\s+(?:AND|OR)\s+|$)'
+                between_match = re.match(between_pattern, expr[pos_after_op:], re.IGNORECASE)
+
+                if between_match:
+                    value_str = f"{between_match.group(1).strip()} AND {between_match.group(2).strip()}"
+                    end_pos = pos_after_op + between_match.end()
+                else:
+                    # If no terminating AND/OR, take all remaining text
+                    value_str = expr[pos_after_op:].strip()
+                    end_pos = len(expr)
+
+            elif op.upper() == 'IN':
+                # For IN, we need to extract the parenthesized list
+                in_value = ""
+                paren_count = 0
+                i = pos_after_op
+
+                # Skip whitespace
+                while i < len(expr) and expr[i].isspace():
+                    i += 1
+
+                if i < len(expr) and expr[i] == '(':
+                    in_value += '('
+                    paren_count = 1
+                    i += 1
+
+                    while i < len(expr) and paren_count > 0:
+                        if expr[i] == '(':
+                            paren_count += 1
+                        elif expr[i] == ')':
+                            paren_count -= 1
+                        in_value += expr[i]
+                        i += 1
+
+                    end_pos = i
+                    value_str = in_value
+                else:
+                    return None, None, None
+
+            elif op.upper() == 'LIKE':
+                # For LIKE, we need to extract the quoted string pattern
+                i = pos_after_op
+                # Skip whitespace
+                while i < len(expr) and expr[i].isspace():
+                    i += 1
+
+                if i < len(expr) and expr[i] in ["'", '"']:
+                    quote_char = expr[i]
+                    start_pos = i
+                    i += 1
+                    # Find the closing quote
+                    while i < len(expr) and expr[i] != quote_char:
+                        # Skip escaped quotes
+                        if expr[i] == '\\' and i + 1 < len(expr) and expr[i + 1] == quote_char:
+                            i += 2
+                        else:
+                            i += 1
+
+                    if i < len(expr):  # Found closing quote
+                        i += 1  # Include the closing quote
+                        value_str = expr[start_pos:i]
+                        end_pos = i
                     else:
-                        self.expr = ''
+                        return None, None, None
+                else:
+                    return None, None, None
 
-                    return col_part, op, val_part
+            elif op.upper() == 'IS':
+                # For IS, handle NULL and NOT NULL
+                is_value_pattern = r'\s*(NOT\s+)?NULL'
+                is_value_match = re.match(is_value_pattern, expr[pos_after_op:], re.IGNORECASE)
+
+                if is_value_match:
+                    not_part = is_value_match.group(1)
+                    value_str = f"{'NOT ' if not_part else ''}NULL"
+                    end_pos = pos_after_op + is_value_match.end()
+                else:
+                    return None, None, None
             else:
-                # For regular operators, use improved logic that stops at AND/OR
-                op_pattern = re.escape(op)
-                # Use positive lookahead to stop before AND/OR or end of string
-                pattern = rf'^(.+?)\s*{op_pattern}\s*(.+?)(?=\s+(?:AND|OR)\s+|$)'
-                match = re.match(pattern, expr)
-                if match:
-                    col_part = match.group(1).strip()
-                    val_part = match.group(2).strip()
+                # For other special operators, find the end of the value before any AND/OR
+                logical_op_match = re.search(r'\s+(AND|OR)\s+', expr[pos_after_op:], re.IGNORECASE)
 
-                    # Find where the current expression ends (before AND/OR)
-                    remaining_match = re.search(r'\s+(AND|OR)\s+', expr, re.IGNORECASE)
-                    if remaining_match:
-                        self.expr = expr[remaining_match.start():].strip()
+                if logical_op_match:
+                    value_str = expr[pos_after_op:pos_after_op + logical_op_match.start()].strip()
+                    end_pos = pos_after_op + logical_op_match.start()
+                else:
+                    value_str = expr[pos_after_op:].strip()
+                    end_pos = len(expr)
+        else:
+            # For standard comparison operators, extract the value part carefully
+            value_part = ""
+            i = pos_after_op
+
+            # Skip whitespace
+            while i < len(expr) and expr[i].isspace():
+                i += 1
+
+            # Handle quoted values
+            if i < len(expr) and expr[i] in ["'", '"']:
+                quote_char = expr[i]
+                value_part += quote_char
+                i += 1
+
+                while i < len(expr) and expr[i] != quote_char:
+                    # Handle escaped quotes
+                    if expr[i] == '\\' and i + 1 < len(expr) and expr[i + 1] == quote_char:
+                        value_part += expr[i:i + 2]
+                        i += 2
                     else:
-                        self.expr = ''
+                        value_part += expr[i]
+                        i += 1
 
-                    return col_part, op, val_part
+                if i < len(expr):  # Found closing quote
+                    value_part += quote_char
+                    i += 1
+            else:
+                # For non-quoted values, read until whitespace or logical operator
+                while i < len(expr) and not re.match(r'\s+(AND|OR)\s+', expr[i:], re.IGNORECASE):
+                    value_part += expr[i]
+                    i += 1
+                    if i >= len(expr):
+                        break
+                    # Stop if we encounter whitespace followed by AND/OR
+                    if expr[i:i + 1].isspace():
+                        next_word_match = re.match(r'\s+(\w+)', expr[i:])
+                        if next_word_match and next_word_match.group(1).upper() in ["AND", "OR"]:
+                            break
 
-        return None, None, None
+            # Extract just to the logical operator or end
+            logical_op_match = re.search(r'\s+(AND|OR)\s+', expr[i:], re.IGNORECASE)
+
+            if logical_op_match:
+                end_pos = i
+                value_str = value_part.strip()
+            else:
+                end_pos = len(expr)
+                value_str = value_part.strip()
+
+        # Update the remaining expression
+        if end_pos < len(expr):
+            self.expr = expr[end_pos:].strip()
+        else:
+            self.expr = ""
+
+        return col_name, op, value_str
 
     def _parse_parenthesized_expression(self) -> pl.Expr:
         """Parse an expression enclosed in parentheses."""
@@ -190,7 +324,6 @@ class _SQLExpressionParser:
     def _parse_special_operator(self, col_name: str, op: str, value_str: str) -> pl.Expr:
         """Parse expressions with special operators like BETWEEN, IN, LIKE."""
         op = op.upper()
-
         if op == 'BETWEEN':
             # Format: BETWEEN lower AND upper
             and_split = re.split(r'\s+AND\s+', value_str, 1, re.IGNORECASE)
@@ -238,10 +371,7 @@ class _SQLExpressionParser:
 
     def _get_column_dtype(self, col_name: str) -> pl.DataType:
         """Get the data type of a column from the DataFrame."""
-        if self.df is not None:
-            col_index = self.df.columns.index(col_name)
-            return self.df.dtypes[col_index]
-        return None
+        return self.column_dtypes.get(col_name, None)
 
     def _parse_value_with_type_checking(self, col_name: str, val_str: str) -> Any:
         """Parse string values into appropriate Python types with column type awareness."""
@@ -250,7 +380,13 @@ class _SQLExpressionParser:
         # Handle quoted strings - always return as string
         if (val_str.startswith("'") and val_str.endswith("'")) or \
                 (val_str.startswith('"') and val_str.endswith('"')):
-            return val_str[1:-1]
+            string_value = val_str[1:-1]
+
+            # Check if it's a date column - attempt to parse date strings
+            col_dtype = self._get_column_dtype(col_name)
+            if col_dtype in [pl.Date, pl.Datetime]:
+                return self._parse_date_or_datetime(string_value)
+            return string_value
 
         # Handle NULL value
         if val_str.upper() == 'NULL':
@@ -291,6 +427,12 @@ class _SQLExpressionParser:
                     return False
                 else:
                     raise ValueError(f"Cannot convert '{val_str}' to boolean for column '{col_name}'")
+            elif col_dtype in [pl.Date, pl.Datetime]:
+                # For date/datetime columns, try to parse as date
+                try:
+                    return self._parse_date_or_datetime(val_str)
+                except ValueError:
+                    raise ValueError(f"Cannot parse '{val_str}' as date/datetime for column '{col_name}'")
 
         # Fallback to automatic type detection
         # Handle numeric values
@@ -310,36 +452,26 @@ class _SQLExpressionParser:
         # If all else fails, return as string
         return val_str
 
-    def _parse_value(self, val_str: str) -> Any:
-        """Parse string values into appropriate Python types (legacy method)."""
-        val_str = val_str.strip()
+    def _parse_date_or_datetime(self, date_str: str) -> Union[date, datetime]:
+        """Parse a string as a date or datetime object."""
+        # Try common date formats
+        formats = [
+            '%Y-%m-%d',  # ISO format: 2023-01-05
+            '%Y/%m/%d',  # Slash format: 2023/01/05
+            '%d-%m-%Y',  # European format: 05-01-2023
+            '%d/%m/%Y',  # European slash: 05/01/2023
+            '%Y-%m-%d %H:%M:%S',  # ISO with time: 2023-01-05 12:34:56
+            '%Y/%m/%d %H:%M:%S',  # Slash with time: 2023/01/05 12:34:56
+        ]
 
-        # Handle quoted strings
-        if (val_str.startswith("'") and val_str.endswith("'")) or \
-                (val_str.startswith('"') and val_str.endswith('"')):
-            return val_str[1:-1]
-
-        # Handle NULL value
-        if val_str.upper() == 'NULL':
-            return None
-
-        # Handle boolean values
-        if val_str.upper() == 'TRUE':
-            return True
-        if val_str.upper() == 'FALSE':
-            return False
-
-        # Handle numeric values
-        try:
-            # Try to convert to integer first
-            return int(val_str)
-        except ValueError:
+        for fmt in formats:
             try:
-                # Then try float
-                return float(val_str)
+                return datetime.strptime(date_str, fmt)
             except ValueError:
-                # If all else fails, return as string
-                return val_str
+                continue
+
+        # If none of the formats match, raise error
+        raise ValueError(f"Cannot parse '{date_str}' as a date/datetime. Use format like '2023-01-05'")
 
     def _parse_in_values_with_type_checking(self, col_name: str, values_str: str) -> List[Any]:
         """Parse a comma-separated list of values for IN operator with type checking."""
@@ -364,32 +496,6 @@ class _SQLExpressionParser:
 
         if current:
             values.append(self._parse_value_with_type_checking(col_name, current.strip()))
-
-        return values
-
-    def _parse_in_values(self, values_str: str) -> List[Any]:
-        """Parse a comma-separated list of values for IN operator (legacy method)."""
-        values = []
-        current = ""
-        in_quotes = False
-        quote_char = None
-
-        for char in values_str:
-            if char in "\"'" and (not current or current[-1] != '\\'):
-                if not in_quotes:
-                    in_quotes = True
-                    quote_char = char
-                elif char == quote_char:
-                    in_quotes = False
-
-            if char == ',' and not in_quotes:
-                values.append(self._parse_value(current.strip()))
-                current = ""
-            else:
-                current += char
-
-        if current:
-            values.append(self._parse_value(current.strip()))
 
         return values
 
