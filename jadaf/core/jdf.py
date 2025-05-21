@@ -4,6 +4,7 @@ Core DataFrame implementation with enhanced slicing.
 
 import polars as pl
 import pandas as pd
+import numpy as np
 from typing import Optional, List, Dict, Any, Union, Tuple, Callable
 import re
 from .sql_parser import _SQLExpressionParser
@@ -253,6 +254,18 @@ class JDF:
         if name in self._column_groups:
             return JDF(self._df.select(self._column_groups[name]))
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
+    def to_numpy(self) -> np.ndarray:
+        """
+        Convert the JDF to a NumPy array.
+        """
+        return self._df.to_numpy()
+
+    def __array__(self, dtype=None) -> np.ndarray:
+        """
+        Support for NumPy array conversion.
+        """
+        return self.to_numpy()
 
     def _validate_columns(self, columns: List[str]) -> List[str]:
         """
