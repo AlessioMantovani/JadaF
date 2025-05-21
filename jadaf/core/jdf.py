@@ -6,6 +6,7 @@ import polars as pl
 import pandas as pd
 from typing import Optional, List, Dict, Any, Union, Tuple, Callable
 import re
+import numpy as np
 from .sql_parser import _SQLExpressionParser
 
 
@@ -33,11 +34,19 @@ class JDF:
         Dictionary mapping column names to their data types.
     """
 
-    def __init__(self, data: Optional[Union[pl.DataFrame, pd.DataFrame, None]] = None):
-        if data is not None and not isinstance(data, (pl.DataFrame, pd.DataFrame)):
-            raise TypeError(f"data must be a Polars DataFrame, Pandas DataFrame or None, got {type(data)}")
+    def __init__(self, data: Optional[Union[pl.DataFrame, pd.DataFrame, np.ndarray, None]] = None,
+                 columns: Optional[List[str]] = None):
+        if data is not None and not isinstance(data, (pl.DataFrame, pd.DataFrame, np.ndarray)):
+            raise TypeError(
+                f"data must be a Polars DataFrame, Pandas DataFrame, NumPy ndarray, or None, got {type(data)}")
+
         if isinstance(data, pd.DataFrame):
-            data = pl.DataFrame(data)  # Convert pandas to polars
+            data = pl.DataFrame(data, schema=columns)
+        elif isinstance(data, np.ndarray):
+            if columns is None:
+                raise ValueError("Column names must be provided when passing a NumPy array.")
+            data = pl.DataFrame(data.tolist(), schema=columns)
+
         self._df = data if data is not None else pl.DataFrame()
 
         # Cache for column groups to improve performance
@@ -243,16 +252,156 @@ class JDF:
 
     def __getattr__(self, name: str):
         """
-        Enable access to column groups as attributes.
+        Delegate undefined method calls to the underlying Polars DataFrame.
+        """
+        # First check for column groups
+        if name in self._column_groups:
+            return JDF(self._df.select(self._column_groups[name]))
+
+        # Then check if the attribute exists in the Polars DataFrame
+        if hasattr(self._df, name):
+            attr = getattr(self._df, name)
+
+            # If it's a method, wrap it to return a JDF when appropriate
+            if callable(attr):
+                def wrapper(*args, **kwargs):
+                    result = attr(*args, **kwargs)
+                    # Return JDF if the result is a DataFrame, otherwise return as-is
+                    if isinstance(result, pl.DataFrame):
+                        return JDF(result)
+                    return result
+
+                return wrapper
+
+            return attr
+
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
+    def select_dtypes(self, include: Optional[List[Any]] = None, exclude: Optional[List[Any]] = None) -> "JDF":
+        """
+        Select columns by data types with enhanced type detection.
+
+        Parameters
+        ----------
+        include : list of data types to include (optional)
+            Data types can be specified as:
+            - Polars data types (pl.Int64, pl.Float32, etc.)
+            - Python types (int, float, str, etc.)
+            - Numpy types (np.int64, np.float32, etc.)
+            - Pandas types ('Int64', 'Float32', etc.)
+            - Type categories ('number', 'integer', 'float', 'datetime', 'string', 'boolean')
+        exclude : list of data types to exclude (optional)
+            Same format as include
+
+        Returns
+        -------
+        JDF
+            A new JDF instance with columns filtered by the specified data types.
 
         Examples
         --------
-        >>> jdf.group_columns("dates", ["start_date", "end_date"])
-        >>> jdf.dates  # Returns JDF with only date columns
+        >>> jdf.select_dtypes(include=['datetime'])  # Select all datetime columns
+        >>> jdf.select_dtypes(include=[np.number])   # Select all numeric columns
+        >>> jdf.select_dtypes(exclude=['string'])    # Select all non-string columns
         """
-        if name in self._column_groups:
-            return JDF(self._df.select(self._column_groups[name]))
-        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+        if include is not None and exclude is not None:
+            raise ValueError("Cannot specify both include and exclude")
+
+        if include is None and exclude is None:
+            return self.copy()
+
+        # Normalize types for easier comparison
+        def normalize_type_list(types_list):
+            if not isinstance(types_list, list):
+                types_list = [types_list]
+
+            normalized = []
+            for t in types_list:
+                # Handle string type names
+                if isinstance(t, str):
+                    t_lower = t.lower()
+                    if t_lower in ['datetime', 'date', 'timestamp']:
+                        normalized.append('datetime')
+                    elif t_lower in ['number', 'numeric']:
+                        normalized.append('number')
+                    elif t_lower in ['integer', 'int']:
+                        normalized.append('integer')
+                    elif t_lower in ['float', 'floating']:
+                        normalized.append('float')
+                    elif t_lower in ['string', 'str', 'text']:
+                        normalized.append('string')
+                    elif t_lower in ['boolean', 'bool']:
+                        normalized.append('boolean')
+                    else:
+                        normalized.append(t_lower)
+                else:
+                    # Handle numpy, pandas, and Python types
+                    if t in [np.number, 'number', 'numeric']:
+                        normalized.append('number')
+                    elif t in [np.integer, int, 'integer', 'int']:
+                        normalized.append('integer')
+                    elif t in [np.floating, float, 'float', 'floating']:
+                        normalized.append('float')
+                    elif t in [str, 'string', 'str', 'text']:
+                        normalized.append('string')
+                    elif t in [bool, 'boolean', 'bool']:
+                        normalized.append('boolean')
+                    elif t in [np.datetime64, 'datetime64', 'datetime', 'date', 'timestamp']:
+                        normalized.append('datetime')
+                    else:
+                        normalized.append(t)  # Keep original for direct type comparisons
+
+            return normalized
+
+        # Determine if a polars dtype matches any of the specified types
+        def is_dtype_match(dtype, normalized_types):
+            dtype_str = str(dtype).lower()
+
+            for t in normalized_types:
+                # Category matching
+                if t == 'datetime':
+                    if any(dt_term in dtype_str for dt_term in ['date', 'datetime', 'timestamp']):
+                        return True
+                elif t == 'number':
+                    if any(num_term in dtype_str for num_term in ['int', 'float', 'uint']):
+                        return True
+                elif t == 'integer':
+                    if any(int_term in dtype_str for int_term in ['int', 'uint']) and 'float' not in dtype_str:
+                        return True
+                elif t == 'float':
+                    if 'float' in dtype_str:
+                        return True
+                elif t == 'string':
+                    if any(str_term in dtype_str for str_term in ['utf8', 'string', 'str']):
+                        return True
+                elif t == 'boolean':
+                    if 'bool' in dtype_str:
+                        return True
+                # Direct type matching (if normalized_types contains actual types)
+                elif dtype == t:
+                    return True
+                # String-based matching
+                elif isinstance(t, str) and t in dtype_str:
+                    return True
+
+            return False
+
+        # Get column names that match the type criteria
+        col_dtype_map = {col: dtype for col, dtype in zip(self._df.columns, self._df.dtypes)}
+        selected_cols = []
+
+        if include is not None:
+            normalized_include = normalize_type_list(include)
+            for col, dtype in col_dtype_map.items():
+                if is_dtype_match(dtype, normalized_include):
+                    selected_cols.append(col)
+        elif exclude is not None:
+            normalized_exclude = normalize_type_list(exclude)
+            for col, dtype in col_dtype_map.items():
+                if not is_dtype_match(dtype, normalized_exclude):
+                    selected_cols.append(col)
+
+        return JDF(self._df.select(selected_cols))
 
     def _validate_columns(self, columns: List[str]) -> List[str]:
         """
